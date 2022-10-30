@@ -1,0 +1,14 @@
+[Unit]
+Description=Prometheus exporter for fping statistics
+
+[Service]
+Restart=on-failure
+EnvironmentFile=/etc/default/fping-exporter
+ExecStart=/usr/bin/fping-exporter $ARGS
+TimeoutStopSec=20s
+SendSIGKILL=yes
+User=prometheus
+
+[Install]
+WantedBy=multi-user.target
+

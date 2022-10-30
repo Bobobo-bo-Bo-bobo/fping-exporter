@@ -1,0 +1,190 @@
+#!/bin/bash
+readonly __NAME="fping-exporter"
+readonly __VERSION="1.0.0"
+
+readonly SHORT_OPTIONS="hB:,r:,t:,c:,i:O:V"
+readonly LONG_OPTIONS="help,backoff-factor:,retry:,tos:,packet-count:,interval:,output-dir:,version"
+
+readonly DEFAULT_BACKOFF="1.0"
+readonly DEFAULT_COUNT="10"
+readonly DEFAULT_INTERVAL="300"
+readonly DEFAULT_OUTDIR="/tmp"
+readonly DEFAULT_RETRY="3"
+readonly DEFAULT_TOS="0x00"
+
+function version() {
+    cat <<EoF
+${__NAME} version ${__VERSION}
+
+Copyright (C) 2022 by Andreas Maus <maus@ypbind.de>
+This program comes with ABSOLUTELY NO WARRANTY.
+
+This program is distributed under the Terms of the GNU General
+Public License Version 3. (http://www.gnu.org/copyleft/gpl.html)
+
+EoF
+}
+
+function usage() {
+    version
+    cat <<EoF
+Usage $(basename "$0") [-h|--help] [-B <f>|--backoff-factor=<f>] [-r <cnt>|--retry=<cnt>] [-t <tos>|--tos=<tos>] \\
+    [-c <cnt>|--packet-count=<cnt>] [-i <sec>|--interval=<sec>] [-O <dir>|--output-dir=<dir>] [-V|--version] <host> ...
+
+    -B <f>                  Backoff factor
+    --backoff-factor=<f>    Default: ${DEFAULT_BACKOFF}
+
+    -O <dir>                Write data to $(basename "$0").prom in <dir>
+    --output-dir=<dir>      Default: ${DEFAULT_OUTDIR}
+
+    -V                      Show version information
+    --version
+
+    -c <cnt>                Number of ICMP packets to send
+    --packet-count=<cnt>    Default: ${DEFAULT_COUNT}
+
+    -h                      This text
+    --help
+
+    -i <eec>                Interval to run ping requests
+    --interval=<sec>        Default: ${DEFAULT_INTERVAL}
+
+    -r <cnt>                Retry count
+    --retry=<cnt>           Default: ${DEFAULT_RETRY}
+
+    -t <tos>                ToS to use
+    --tos=<tos>             Default: ${DEFAULT_TOS}
+
+EoF
+}
+
+if ! opar=$(getopt -o ${SHORT_OPTIONS} --long ${LONG_OPTIONS} -n "$(basename "$0")" -- "$@"); then
+    echo "Can't parse command line" >&2
+fi
+
+eval set -- "${opar}"
+
+backoff=${DEFAULT_BACKOFF}
+count=${DEFAULT_COUNT}
+interval=${DEFAULT_INTERVAL}
+retry=${DEFAULT_RETRY}
+tos=${DEFAULT_TOS}
+outdir=${DEFAULT_OUTDIR}
+
+while true; do
+    case "$1" in
+        "-B"|"--backoff-factor=")
+            backoff="$2"
+            shift 2
+            ;;
+        "-O"|"--output-dir")
+            outdir="$2"
+            shift 2
+            ;;
+        "-V"|"--version")
+            version
+            exit 0
+            ;;
+        "-c"|"--packet-count")
+            count="$2"
+            shift 2
+            ;;
+        "-h"|"--help")
+            usage
+            exit 0
+            ;;
+        "-i"|"--interval")
+            interval="$2"
+            shift 2
+            ;;
+        "-r"|"--retry")
+            retry="$2"
+            shift 2
+            ;;
+        "-t"|"--tos")
+            tos="$2"
+            shift 2
+            ;;
+        "--")
+            break
+            ;;
+        "*")
+            echo "Error: Can't parse command line options" >&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+shift ${OPTIND}
+
+if [ $# -eq 0 ]; then
+    echo "Missing host list" >&2
+    usage
+    exit 1
+fi
+
+readonly backoff
+readonly count
+readonly interval
+readonly retry
+readonly tos
+readonly outdir=$(realpath "${outdir}")
+readonly outfile=${outdir}/$(basename "$0")".prom"
+readonly host_list="$*"
+
+while true; do
+    tempfile=$(mktemp --tmpdir="${outdir}")
+
+    fping -B "${backoff}" -r "${retry}" -O "${tos}" -C "${count}" -q ${host_list} 2>&1 | awk 'BEGIN{
+        print("# TYPE fping_round_trip_time_seconds gauge");
+        print("# HELP fping_round_trip_time_seconds Round-trip time for ICMP packets")
+        print("# TYPE fping_packets gauge");
+        print("# HELP fping_packets ICMP packets");
+        print("# TYPE fping_packet_loss_percent gauge");
+        print("# HELP fping_packet_loss_percent Packet loss");
+}
+{
+
+    min=9.9e+99;
+    max=-1;
+    loss=0;
+    recv=0;
+    sum=0;
+    sent=0;
+
+    host=$1
+    for (i=3; i<=NF; i++) {
+        sent+=1;
+
+        if ($i == "-") {
+            loss+=1;
+        } else {
+            recv+=1;
+            sum+=$i;
+            if ($i < min) {
+                min=$i;
+            }
+            if ($i > max) {
+                max=$i;
+            }
+        }
+    }
+
+    if (recv > 0) {
+        avg=sum/recv;
+        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"min\"} %f\n", host, min/1000.0);
+        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"avg\"} %f\n", host, avg/1000.0);
+        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"max\"} %f\n", host, max/1000.0);
+    }
+
+    printf("fping_packets{remote=\"%s\", direction=\"sent\"} %d\n", host, sent);
+    printf("fping_packets{remote=\"%s\", direction=\"received\"} %d\n", host, recv);
+    printf("fping_packet_loss_percent{remote=\"%s\"} %f\n", host, 1.0*(sent-recv)/sent);
+}
+' > "${tempfile}"
+
+    mv "${tempfile}" "${outfile}"
+
+    sleep "${interval}"
+done
+
