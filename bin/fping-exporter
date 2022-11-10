@@ -1,13 +1,14 @@
 #!/bin/bash
 readonly __NAME="fping-exporter"
-readonly __VERSION="1.0.0"
+readonly __VERSION="1.0.1"
 
-readonly SHORT_OPTIONS="hB:,r:,t:,c:,i:O:V"
-readonly LONG_OPTIONS="help,backoff-factor:,retry:,tos:,packet-count:,interval:,output-dir:,version"
+readonly SHORT_OPTIONS="hB:r:t:c:i:x:O:V"
+readonly LONG_OPTIONS="help,backoff-factor:,retry:,tos:,packet-count:,interval:,output-dir:,version,max:"
 
 readonly DEFAULT_BACKOFF="1.0"
 readonly DEFAULT_COUNT="10"
 readonly DEFAULT_INTERVAL="300"
+readonly DEFAULT_MAX_RTT="5000"
 readonly DEFAULT_OUTDIR="/tmp"
 readonly DEFAULT_RETRY="3"
 readonly DEFAULT_TOS="0x00"
@@ -29,7 +30,8 @@ function usage() {
     version
     cat <<EoF
 Usage $(basename "$0") [-h|--help] [-B <f>|--backoff-factor=<f>] [-r <cnt>|--retry=<cnt>] [-t <tos>|--tos=<tos>] \\
-    [-c <cnt>|--packet-count=<cnt>] [-i <sec>|--interval=<sec>] [-O <dir>|--output-dir=<dir>] [-V|--version] <host> ...
+    [-c <cnt>|--packet-count=<cnt>] [-i <sec>|--interval=<sec>] [-O <dir>|--output-dir=<dir>] [-V|--version] \\
+    [-x <msec>|--max=<msec>] <host> ...
 
     -B <f>                  Backoff factor
     --backoff-factor=<f>    Default: ${DEFAULT_BACKOFF}
@@ -55,6 +57,8 @@ Usage $(basename "$0") [-h|--help] [-B <f>|--backoff-factor=<f>] [-r <cnt>|--ret
     -t <tos>                ToS to use
     --tos=<tos>             Default: ${DEFAULT_TOS}
 
+    -x <msec>               Maximal value for round trip time (in milliseconds) to be considered as valid
+    --max=<msec>            Default: ${DEFAULT_MAX_RTT}
 EoF
 }
 
@@ -70,6 +74,7 @@ interval=${DEFAULT_INTERVAL}
 retry=${DEFAULT_RETRY}
 tos=${DEFAULT_TOS}
 outdir=${DEFAULT_OUTDIR}
+max_rtt=${DEFAULT_MAX_RTT}
 
 while true; do
     case "$1" in
@@ -105,6 +110,10 @@ while true; do
             tos="$2"
             shift 2
             ;;
+        "-x"|"--max")
+            max_rtt="$2"
+            shift 2
+            ;;
         "--")
             break
             ;;
@@ -123,19 +132,28 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+if [ "${max_rtt}" -le 0 ]; then
+    echo "Error: Maximal value for average RTT to be considered as valid must be greather than null" >&2
+    exit 1
+fi
+
 readonly backoff
 readonly count
 readonly interval
+readonly max_rtt
 readonly retry
 readonly tos
-readonly outdir=$(realpath "${outdir}")
-readonly outfile=${outdir}/$(basename "$0")".prom"
+outdir=$(realpath "${outdir}")
+readonly outdir
+outfile=${outdir}/$(basename "$0")".prom"
+readonly outfile
 readonly host_list="$*"
 
 while true; do
     tempfile=$(mktemp --tmpdir="${outdir}")
 
-    fping -B "${backoff}" -r "${retry}" -O "${tos}" -C "${count}" -q ${host_list} 2>&1 | awk 'BEGIN{
+    # shellcheck disable=SC2086
+    fping -B "${backoff}" -r "${retry}" -O "${tos}" -C "${count}" -q ${host_list} 2>&1 | awk -v max_rtt=${max_rtt} 'BEGIN{
         print("# TYPE fping_round_trip_time_seconds gauge");
         print("# HELP fping_round_trip_time_seconds Round-trip time for ICMP packets")
         print("# TYPE fping_packets gauge");
@@ -170,21 +188,32 @@ while true; do
         }
     }
 
-    if (recv > 0) {
+    if (recv > 0 ) {
         avg=sum/recv;
-        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"min\"} %f\n", host, min/1000.0);
-        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"avg\"} %f\n", host, avg/1000.0);
-        printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"max\"} %f\n", host, max/1000.0);
     }
 
-    printf("fping_packets{remote=\"%s\", direction=\"sent\"} %d\n", host, sent);
-    printf("fping_packets{remote=\"%s\", direction=\"received\"} %d\n", host, recv);
-    printf("fping_packet_loss_percent{remote=\"%s\"} %f\n", host, 1.0*(sent-recv)/sent);
+    if (min > max_rtt || avg > max_rtt || max > max_rtt) {
+        printf("RTT exceeds %f for host %s (min: %f / avg: %f / max: %f)\n", max_rtt, host, min, avg, max) > "/dev/stderr";
+    } else {
+        if (recv > 0) {
+            printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"min\"} %f\n", host, min/1000.0);
+            printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"avg\"} %f\n", host, avg/1000.0);
+            printf("fping_round_trip_time_seconds{remote=\"%s\", type=\"max\"} %f\n", host, max/1000.0);
+        }
+
+        printf("fping_packets{remote=\"%s\", direction=\"sent\"} %d\n", host, sent);
+        printf("fping_packets{remote=\"%s\", direction=\"received\"} %d\n", host, recv);
+        printf("fping_packet_loss_percent{remote=\"%s\"} %f\n", host, 1.0*(sent-recv)/sent);
+    }
 }
 ' > "${tempfile}"
 
-    mv "${tempfile}" "${outfile}"
-
+    if ! grep -q -v '^# ' "${tempfile}"; then
+        cat /dev/null > "${outfile}"
+        rm -f "${tempfile}"
+    else
+        mv "${tempfile}" "${outfile}"
+    fi
     sleep "${interval}"
 done
 
