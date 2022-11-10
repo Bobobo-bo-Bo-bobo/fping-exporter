@@ -33,6 +33,7 @@ and export it's content for scrape requests.
 |`-i <sec>` / `--interval=<sec>` |Send ping requests to hosts every <sec> second |300
 |`-r <count>` / `--retry=<count>` |Retry limit |3
 |`-t <tos>` / `--tos=<tos>` |Set type of service flag to <tos> |`0x00`
+|`-x <msec>` / `--max=<msec>` |Maximal value for round-trip time to be considered as valid in msec |`5000`
 |===
 
 == Licenses
