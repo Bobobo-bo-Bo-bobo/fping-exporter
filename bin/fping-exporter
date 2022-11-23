@@ -1,6 +1,6 @@
 #!/bin/bash
 readonly __NAME="fping-exporter"
-readonly __VERSION="1.0.2"
+readonly __VERSION="1.0.3"
 
 readonly SHORT_OPTIONS="hB:r:t:c:i:x:O:V"
 readonly LONG_OPTIONS="help,backoff-factor:,retry:,tos:,packet-count:,interval:,output-dir:,version,max:"
@@ -77,7 +77,7 @@ for prg in ${required}; do
 done
 
 if ! opar=$(getopt -o ${SHORT_OPTIONS} --long ${LONG_OPTIONS} -n "$(basename "$0")" -- "$@"); then
-    echo "Can't parse command line" >&2
+    echo "Error: Can't parse command line" >&2
 fi
 
 eval set -- "${opar}"
@@ -141,7 +141,7 @@ done
 shift ${OPTIND}
 
 if [ $# -eq 0 ]; then
-    echo "Missing host list" >&2
+    echo "Error: Missing host list" >&2
     usage
     exit 1
 fi
@@ -165,7 +165,19 @@ readonly host_list="$*"
 
 if [ ! -d "${outdir}" ]; then
     if ! mkdir -p "${outdir}"; then
-        echo "Can't create output directory ${outdir}" >&2
+        echo "Error: Can't create output directory ${outdir}" >&2
+        exit 1
+    fi
+fi
+
+if [ ! -w "${outdir}" ]; then
+    echo "Error: Output directory ${outdir} is not writable" >&2
+    exit 1
+fi
+
+if [ -e "${outfile}" ]; then
+    if [ ! -w "${outfile}" ]; then
+        echo "Error: Output file ${outfile} already exist but is not writable" >&2
         exit 1
     fi
 fi
