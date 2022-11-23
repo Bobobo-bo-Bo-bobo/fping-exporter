@@ -1,6 +1,6 @@
 #!/bin/bash
 readonly __NAME="fping-exporter"
-readonly __VERSION="1.0.1"
+readonly __VERSION="1.0.2"
 
 readonly SHORT_OPTIONS="hB:r:t:c:i:x:O:V"
 readonly LONG_OPTIONS="help,backoff-factor:,retry:,tos:,packet-count:,interval:,output-dir:,version,max:"
@@ -12,6 +12,8 @@ readonly DEFAULT_MAX_RTT="5000"
 readonly DEFAULT_OUTDIR="/tmp"
 readonly DEFAULT_RETRY="3"
 readonly DEFAULT_TOS="0x00"
+
+readonly required="awk fping"
 
 function version() {
     cat <<EoF
@@ -61,6 +63,18 @@ Usage $(basename "$0") [-h|--help] [-B <f>|--backoff-factor=<f>] [-r <cnt>|--ret
     --max=<msec>            Default: ${DEFAULT_MAX_RTT}
 EoF
 }
+
+function check_requirement() {
+    requires="$1"
+    which "${requires}" 2>/dev/null >/dev/null
+}
+
+for prg in ${required}; do
+    if ! check_requirement "${prg}"; then
+        echo "Error: Required programm ${prg} not found" >&2
+        exit 1
+    fi
+done
 
 if ! opar=$(getopt -o ${SHORT_OPTIONS} --long ${LONG_OPTIONS} -n "$(basename "$0")" -- "$@"); then
     echo "Can't parse command line" >&2
@@ -148,6 +162,13 @@ readonly outdir
 outfile=${outdir}/$(basename "$0")".prom"
 readonly outfile
 readonly host_list="$*"
+
+if [ ! -d "${outdir}" ]; then
+    if ! mkdir -p "${outdir}"; then
+        echo "Can't create output directory ${outdir}" >&2
+        exit 1
+    fi
+fi
 
 while true; do
     tempfile=$(mktemp --tmpdir="${outdir}")
