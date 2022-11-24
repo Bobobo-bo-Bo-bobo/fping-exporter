@@ -36,6 +36,33 @@ and export it's content for scrape requests.
 |`-x <msec>` / `--max=<msec>` |Maximal value for round-trip time to be considered as valid in msec |`5000`
 |===
 
+== Running as unprivileged user
+
+For security reasons, it's not recommended to run the exporter as `root`.
+To allow `fping` to create raw network sockets `root` permissions are required.
+
+Some distributions don't allow this by either enabling the `SUID` bit in the file permissions (file should be owned by `root`) or by not setting
+the `cap_net_raw` capability.
+
+On modern systems using the capability flag instead of classic file permissions should be used:
+
+Capabilities can be queried using the `getcap` command:
+
+....
+root@server:~# which fping
+/usr/bin/fping
+root@server:~# getcap /usr/bin/fping
+root@server:~# 
+....
+
+and can be set by the `setcap` command:
+
+....
+root@server:~# setcap cap_net_raw=ep /usr/bin/fping
+root@server:~# getcap /usr/bin/fping
+/usr/bin/fping cap_net_raw=ep
+....
+
 == Licenses
 
 === fping-exporter
