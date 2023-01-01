@@ -19,7 +19,7 @@ function version() {
     cat <<EoF
 ${__NAME} version ${__VERSION}
 
-Copyright (C) 2022 by Andreas Maus <maus@ypbind.de>
+Copyright (C) 2022-2023 by Andreas Maus <maus@ypbind.de>
 This program comes with ABSOLUTELY NO WARRANTY.
 
 This program is distributed under the Terms of the GNU General
